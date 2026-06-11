@@ -44,8 +44,8 @@ const Expenses = () => {
       const data = await res.json();
       if (res.ok) setExpenses(data);
       else if (res.status === 401) navigate('/login');
-    } catch {
-      showToast('Failed to load expenses', 'error');
+    } catch (err) {
+      console.error('Failed to load expenses:', err);
     }
     setLoading(false);
   };
