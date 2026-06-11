@@ -6,38 +6,6 @@ const Budget = require('../models/Budget');
 const aiKey = process.env.GEMINI_API_KEY || '';
 const ai = new GoogleGenAI({ apiKey: aiKey });
 
-/**
- * Helper to ensure database is seeded with some dummy data if empty, 
- * so that new users get a gorgeous initial experience instantly.
- */
-const seedMockDataIfEmpty = async (userId) => {
-  const expenseCount = await Expense.countDocuments({ user: userId });
-  if (expenseCount === 0) {
-    const mockExpenses = [
-      { user: userId, category: 'Food', amount: 4500, merchant: 'Swiggy', type: 'expense', date: new Date(Date.now() - 2*24*60*60*1000), notes: 'Dinner with friends' },
-      { user: userId, category: 'Food', amount: 1200, merchant: 'Starbucks', type: 'expense', date: new Date(Date.now() - 4*24*60*60*1000), notes: 'Coffee & croissant' },
-      { user: userId, category: 'Shopping', amount: 8000, merchant: 'Zara', type: 'expense', date: new Date(), notes: 'New apparel' },
-      { user: userId, category: 'Transport', amount: 1500, merchant: 'Uber', type: 'expense', date: new Date(Date.now() - 1*24*60*60*1000), notes: 'Ride to office' },
-      { user: userId, category: 'Bills', amount: 499, merchant: 'Netflix', type: 'expense', date: new Date(Date.now() - 10*24*60*60*1000), notes: 'Monthly premium subscription' },
-      { user: userId, category: 'Bills', amount: 299, merchant: 'Spotify', type: 'expense', date: new Date(Date.now() - 15*24*60*60*1000), notes: 'Music premium subscription' },
-      { user: userId, category: 'Entertainment', amount: 2500, merchant: 'PVR Cinemas', type: 'expense', date: new Date(Date.now() - 5*24*60*60*1000), notes: 'Weekend movie and snacks' },
-      { user: userId, category: 'Other', amount: 10000, merchant: 'Salary Credited', type: 'income', date: new Date(Date.now() - 12*24*60*60*1000), notes: 'Freelance design gig' },
-      { user: userId, category: 'Other', amount: 45000, merchant: 'Monthly Paycheck', type: 'income', date: new Date(Date.now() - 20*24*60*60*1000), notes: 'Primary job paycheck' }
-    ];
-    await Expense.insertMany(mockExpenses);
-  }
-
-  const budgetCount = await Budget.countDocuments({ user: userId });
-  if (budgetCount === 0) {
-    const currentMonth = new Date().toISOString().slice(0, 7);
-    const mockBudgets = [
-      { user: userId, category: 'Food', limit: 8000, month: currentMonth },
-      { user: userId, category: 'Shopping', limit: 5000, month: currentMonth },
-      { user: userId, category: 'Transport', limit: 3000, month: currentMonth }
-    ];
-    await Budget.insertMany(mockBudgets);
-  }
-};
 
 /**
  * 1. GET /api/ai/insights
@@ -46,7 +14,6 @@ const seedMockDataIfEmpty = async (userId) => {
 exports.getInsights = async (req, res) => {
   try {
     const userId = req.user.id;
-    await seedMockDataIfEmpty(userId);
 
     // Fetch all user records
     const expenses = await Expense.find({ user: userId });
@@ -64,12 +31,8 @@ exports.getInsights = async (req, res) => {
       categoryTotals[e.category] = (categoryTotals[e.category] || 0) + e.amount;
     });
 
-    // Subscriptions
-    const activeSubs = [
-      { name: 'Netflix', cost: 499, status: 'Active', usage: 'High', lastUsed: '1 day ago' },
-      { name: 'Spotify', cost: 299, status: 'Active', usage: 'Unused', lastUsed: '28 days ago' },
-      { name: 'Amazon Prime', cost: 179, status: 'Active', usage: 'Medium', lastUsed: '8 days ago' }
-    ];
+    // Subscriptions — fetched from real user data (bills category)
+    const activeSubs = [];
 
     // Detect anomalies
     const anomalies = [];
@@ -97,7 +60,8 @@ exports.getInsights = async (req, res) => {
     });
 
     // Score calculations
-    let healthScore = 75;
+    const isNewUser = expenses.length === 0 && budgets.length === 0;
+    let healthScore = isNewUser ? 0 : 75;
     let savingsRate = 0;
     if (totalIncome > 0) {
       const savings = totalIncome - totalSpent;
@@ -134,9 +98,9 @@ Analyze this data and return exactly 3 bullet points with extremely specific, ac
     res.json({
       healthScore,
       breakdown: {
-        savingsDiscipline: Math.min(Math.max(40 + savingsRate, 30), 95),
-        budgetManagement: budgetPerformance.length > 0 ? Math.min(Math.round(100 - (budgetPerformance.filter(p => p.percentage > 100).length * 20)), 98) : 80,
-        subscriptionControl: activeSubs.filter(s => s.usage === 'Unused').length > 0 ? 64 : 92
+        savingsDiscipline: isNewUser ? 0 : Math.min(Math.max(40 + savingsRate, 30), 95),
+        budgetManagement: isNewUser ? 0 : (budgetPerformance.length > 0 ? Math.min(Math.round(100 - (budgetPerformance.filter(p => p.percentage > 100).length * 20)), 98) : 80),
+        subscriptionControl: isNewUser ? 0 : (activeSubs.filter(s => s.usage === 'Unused').length > 0 ? 64 : 92)
       },
       forecast: {
         monthEndExpenses: Math.round(totalSpent * 1.15),
