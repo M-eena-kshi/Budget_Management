@@ -1,75 +1,9 @@
 const Subscription = require('../models/Subscription');
 
-// Seed default premium mock subscriptions if user has none
-const seedDefaultSubscriptions = async (userId) => {
-  const count = await Subscription.countDocuments({ user: userId });
-  if (count === 0) {
-    const today = new Date();
-    
-    const defaults = [
-      {
-        user: userId,
-        name: 'Netflix',
-        category: 'Entertainment',
-        cost: 649,
-        billingCycle: 'monthly',
-        nextRenewal: new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1), // Tomorrow
-        paymentMethod: 'UPI',
-        status: 'Active',
-        confidence: 99,
-        notifyBefore: true,
-        unusedDays: 2 // active
-      },
-      {
-        user: userId,
-        name: 'Spotify Premium',
-        category: 'Music',
-        cost: 119,
-        billingCycle: 'monthly',
-        nextRenewal: new Date(today.getFullYear(), today.getMonth(), today.getDate() + 3), // 3 days
-        paymentMethod: 'Credit Card',
-        status: 'Active',
-        confidence: 96,
-        notifyBefore: true,
-        unusedDays: 21 // UNUSED alert trigger!
-      },
-      {
-        user: userId,
-        name: 'AWS Cloud Services',
-        category: 'Cloud Services',
-        cost: 2450,
-        billingCycle: 'monthly',
-        nextRenewal: new Date(today.getFullYear(), today.getMonth(), today.getDate() + 5), // 5 days
-        paymentMethod: 'Debit Card',
-        status: 'Active',
-        confidence: 98,
-        notifyBefore: false,
-        unusedDays: 0
-      },
-      {
-        user: userId,
-        name: 'Adobe Creative Cloud',
-        category: 'Productivity',
-        cost: 1630,
-        billingCycle: 'monthly',
-        nextRenewal: new Date(today.getFullYear(), today.getMonth(), today.getDate() + 8), // 8 days
-        paymentMethod: 'UPI',
-        status: 'Active',
-        confidence: 95,
-        notifyBefore: true,
-        unusedDays: 35 // INACTIVE service alert trigger!
-      }
-    ];
-
-    await Subscription.insertMany(defaults);
-  }
-};
-
 // 1. GET /api/subscriptions
 exports.getSubscriptions = async (req, res) => {
   try {
     const userId = req.user.id;
-    await seedDefaultSubscriptions(userId);
     
     const subs = await Subscription.find({ user: userId }).sort({ nextRenewal: 1 });
     res.json(subs);
