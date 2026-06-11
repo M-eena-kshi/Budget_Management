@@ -51,3 +51,14 @@ exports.deleteBudget = async (req, res) => {
   }
 };
 
+// @desc    Delete all budgets for user
+// @route   DELETE /api/budgets
+// @access  Private
+exports.deleteAllBudgets = async (req, res) => {
+  try {
+    await Budget.deleteMany({ user: req.user.id });
+    res.status(200).json({ message: 'All budgets deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
