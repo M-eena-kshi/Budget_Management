@@ -86,3 +86,15 @@ exports.deleteExpense = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+// @desc    Delete all expenses for the logged-in user
+// @route   DELETE /api/expenses
+// @access  Private
+exports.deleteAllExpenses = async (req, res) => {
+  try {
+    await Expense.deleteMany({ user: req.user.id });
+    res.status(200).json({ message: 'All expenses deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
