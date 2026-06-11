@@ -50,6 +50,7 @@ const Settings = () => {
   const [email, setEmail] = useState(localUser.email || '');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [oldPassword, setOldPassword] = useState('');
 
   // Settings State Schema — merged from defaults + localStorage
   const [settings, setSettings] = useState({
@@ -131,7 +132,10 @@ const Settings = () => {
     setSaving(true);
     try {
       const payload = { name, email, settings };
-      if (password) payload.password = password;
+      if (password) {
+        payload.password = password;
+        payload.oldPassword = oldPassword;
+      }
 
       const res = await fetch('/api/auth/update', {
         method: 'PUT',
@@ -146,11 +150,13 @@ const Settings = () => {
         showToast('Configuration synced securely!');
         setPassword('');
         setConfirmPassword('');
+        setOldPassword('');
         const localUser = JSON.parse(localStorage.getItem('user')) || {};
         localUser.name = data.name;
         localUser.email = data.email;
         localUser.settings = data.settings;
         localStorage.setItem('user', JSON.stringify(localUser));
+        window.dispatchEvent(new Event('theme-changed'));
       } else {
         showToast(data.message || 'Error updating settings', 'error');
       }
@@ -175,6 +181,10 @@ const Settings = () => {
         ...prev,
         [field]: value
       }));
+    }
+    
+    if (field === 'theme' || field === 'accentColor') {
+      window.dispatchEvent(new CustomEvent('theme-preview', { detail: { field, value } }));
     }
   };
 
@@ -202,7 +212,6 @@ const Settings = () => {
   // Sidebar Tabs Config list with associated descriptions & search tags
   const ALL_TABS = [
     { id: 'profile', label: '👤 Profile & Account', desc: 'Update login email, phone, and passwords', tags: 'name email password avatar info' },
-    { id: 'security', label: '🔒 Security & 2FA', desc: 'Secure sessions, 2FA, and locks', tags: 'security lock encrypted 2fa privacy session' },
     { id: 'appearance', label: '🎨 Appearance Theme', desc: 'Accent colors, theme preview layouts', tags: 'theme appearance style dark light neon colors' },
     { id: 'notifications', label: '🔔 Alerts & Reminders', desc: 'Daily insights, thresholds, AI triggers', tags: 'notifications alerts email reminders bill' },
     { id: 'localization', label: '🌐 Localization & Language', desc: 'Primary currency, languages, date formats', tags: 'localization language currency inr usd format' },
@@ -448,7 +457,17 @@ const Settings = () => {
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                        <div className="pt-2">
+                          <label className="block text-xs text-slate-500 mb-1 font-semibold uppercase">Old Password</label>
+                          <input
+                            type="password"
+                            placeholder="Current password"
+                            className="w-full glass-input text-xs py-2.5 mb-4"
+                            value={oldPassword}
+                            onChange={e => setOldPassword(e.target.value)}
+                          />
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div>
                             <label className="block text-xs text-slate-500 mb-1 font-semibold uppercase">New Password</label>
                             <input
@@ -469,70 +488,6 @@ const Settings = () => {
                               onChange={e => setConfirmPassword(e.target.value)}
                             />
                           </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* SECURITY TAB */}
-                    {activeTab === 'security' && (
-                      <div className="space-y-4">
-                        <div className="border-b border-slate-800/50 pb-3 flex justify-between items-center">
-                          <div>
-                            <h3 className="text-lg font-bold text-white">🔒 Security Controls</h3>
-                            <p className="text-xs text-slate-400 mt-0.5">Define authenticators and strict privacy locks</p>
-                          </div>
-                          <div className="flex items-center gap-1 bg-indigo-950/30 text-indigo-400 text-[9px] px-2 py-0.5 rounded border border-indigo-500/20 font-bold">
-                            <span>🔒 Encrypted</span>
-                          </div>
-                        </div>
-
-                        <div className="space-y-3">
-                          
-                          {/* 3. Dynamic Toggle Switches */}
-                          <div className="bg-slate-900/60 p-4 rounded-2xl border border-slate-850 flex items-center justify-between hover:border-slate-800 transition-all">
-                            <div>
-                              <div className="text-xs font-bold text-white">Enable Two-Factor Authentication (2FA)</div>
-                              <div className="text-[10px] text-slate-400 mt-0.5">Require an authenticator pin when accessing the dashboard on new devices.</div>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => updateSettingField('security', 'twoFactorEnabled', !settings.security?.twoFactorEnabled)}
-                              className={`w-10 h-6 flex items-center rounded-full p-1 cursor-pointer transition-all duration-300 ${
-                                settings.security?.twoFactorEnabled ? 'bg-indigo-600' : 'bg-slate-800'
-                              }`}
-                            >
-                              <div className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-all duration-300 ${
-                                settings.security?.twoFactorEnabled ? 'translate-x-4' : 'translate-x-0'
-                              }`}></div>
-                            </button>
-                          </div>
-
-                          <div className="bg-slate-900/60 p-4 rounded-2xl border border-slate-850 flex items-center justify-between hover:border-slate-800 transition-all">
-                            <div>
-                              <div className="text-xs font-bold text-white">Strict Chart Privacy Masking</div>
-                              <div className="text-[10px] text-slate-400 mt-0.5">Conceal exact monetary figures on analytical charts.</div>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => updateSettingField('security', 'privacyControls', !settings.security?.privacyControls)}
-                              className={`w-10 h-6 flex items-center rounded-full p-1 cursor-pointer transition-all duration-300 ${
-                                settings.security?.privacyControls ? 'bg-indigo-600' : 'bg-slate-800'
-                              }`}
-                            >
-                              <div className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-all duration-300 ${
-                                settings.security?.privacyControls ? 'translate-x-4' : 'translate-x-0'
-                              }`}></div>
-                            </button>
-                          </div>
-
-                          <div className="bg-slate-900/20 p-4 border border-slate-850 rounded-xl flex items-center justify-between text-xs mt-4">
-                            <div>
-                              <div className="font-bold text-white">Session Audit Information</div>
-                              <div className="text-[10px] text-slate-500 mt-0.5">Logged in from: Chrome (macOS IP: 192.168.1.1)</div>
-                            </div>
-                            <span className="bg-emerald-950 text-emerald-400 text-[9px] font-bold px-2 py-0.5 rounded tracking-wide border border-emerald-500/20">Secure Active</span>
-                          </div>
-
                         </div>
                       </div>
                     )}

@@ -56,8 +56,8 @@ const Budgets = () => {
       const [bData, eData] = await Promise.all([bRes.json(), eRes.json()]);
       if (bRes.ok) setBudgets(bData);
       if (eRes.ok) setExpenses(eData);
-    } catch {
-      showToast('Failed to load data', 'error');
+    } catch (err) {
+      console.error('Failed to load data:', err);
     }
     setLoading(false);
   };

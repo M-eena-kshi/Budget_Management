@@ -60,8 +60,7 @@ const Subscriptions = () => {
         setSubscriptions(data || []);
       }
     } catch (e) {
-      console.error(e);
-      showToast('Error loading subscriptions', 'error');
+      console.error('Failed to load subscriptions:', e);
     } finally {
       setLoading(false);
     }

@@ -13,58 +13,185 @@ const Dashboard = () => {
   const dropdownRef = useRef(null);
   const notifRef = useRef(null);
 
+  const [searchTerm, setSearchTerm] = useState('');
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good Morning' : hour < 18 ? 'Good Afternoon' : 'Good Evening';
+
   // Bell notification panel toggle
   const [showNotifications, setShowNotifications] = useState(false);
-  const [notifications, setNotifications] = useState([
-    { id: 1, type: 'warning', title: '⚠️ Budget Exceeded', msg: 'You exceeded food budget by ₹2,400.', color: 'pink', read: false },
-    { id: 2, type: 'success', title: '📈 Savings Improved', msg: 'Savings improved by 12% this month!', color: 'emerald', read: false },
-    { id: 3, type: 'info', title: '🤖 AI Insight Ready', msg: 'New AI spending forecast available.', color: 'indigo', read: false },
-  ]);
+  const [notifications, setNotifications] = useState([]);
 
-  // Dark / light mode toggle
-  const [darkMode, setDarkMode] = useState(true);
+  const [darkMode, setDarkMode] = useState(() => {
+    try {
+      const userObj = JSON.parse(localStorage.getItem('user')) || {};
+      const settings = userObj.settings || {};
+      return settings.theme !== 'light';
+    } catch { return true; }
+  });
+
   const toggleDarkMode = () => {
     setDarkMode(prev => {
       const next = !prev;
-      document.documentElement.classList.toggle('bg-white', !next);
-      document.body.style.background = next ? '' : '#f8fafc';
-      document.body.style.color = next ? '' : '#0f172a';
+      try {
+        const userObj = JSON.parse(localStorage.getItem('user')) || {};
+        if (!userObj.settings) userObj.settings = {};
+        userObj.settings.theme = next ? 'dark' : 'light';
+        localStorage.setItem('user', JSON.stringify(userObj));
+
+        // Also dispatch to the backend so it persists across sessions if needed
+        fetch('/api/auth/update', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ settings: userObj.settings })
+        }).catch(e => console.error(e));
+
+        window.dispatchEvent(new CustomEvent('theme-changed'));
+      } catch (e) {
+        console.error(e);
+      }
       return next;
     });
   };
 
-  const unreadCount = notifications.filter(n => !n.read).length;
+  const unreadCount = notifications.filter(n => !n.isRead).length;
 
-  const markAllRead = () => setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-  const dismissNotif = (id) => setNotifications(prev => prev.filter(n => n.id !== id));
+  const markAllRead = () => {
+    const allIds = notifications.map(n => n.id);
+    localStorage.setItem('readNotifications', JSON.stringify(allIds));
+    setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+  };
+
+  const dismissNotif = (id) => {
+    const cleared = JSON.parse(localStorage.getItem('clearedNotifications') || '[]');
+    cleared.push(id);
+    localStorage.setItem('clearedNotifications', JSON.stringify(cleared));
+    setNotifications(prev => prev.filter(n => n.id !== id));
+  };
 
   const [subCount, setSubCount] = useState(0);
   const [subCost, setSubCost] = useState(0);
+  const [upcomingBills, setUpcomingBills] = useState([]);
+  const [goal, setGoal] = useState(() => {
+    try {
+      const stored = localStorage.getItem(`user_goal_${user._id}`);
+      return stored ? JSON.parse(stored) : { name: '', progress: 0 };
+    } catch {
+      return { name: '', progress: 0 };
+    }
+  });
+
+  const handleEditGoal = () => {
+    const newName = prompt('Enter your financial goal name (e.g., MacBook, Vacation):', goal.name);
+    if (!newName) return;
+    const newProgress = prompt('Enter current progress percentage (0-100):', goal.progress);
+    if (!newProgress || isNaN(newProgress) || newProgress < 0 || newProgress > 100) {
+      showToast('Invalid progress percentage.', 'error');
+      return;
+    }
+    const newGoal = { name: newName, progress: parseInt(newProgress, 10) };
+    setGoal(newGoal);
+    localStorage.setItem(`user_goal_${user._id}`, JSON.stringify(newGoal));
+    showToast('Goal updated successfully!');
+  };
 
   const [expenses, setExpenses] = useState([]);
+  const [budgets, setBudgets] = useState([]);
   const [chartType, setChartType] = useState('line'); // 'line' | 'bar'
   const [chartPeriod, setChartPeriod] = useState('month'); // 'week' | 'month'
 
-  // Fetch user expenses
-  const fetchExpenses = async () => {
+  // Fetch user expenses and budgets
+  const fetchData = async () => {
     try {
-      const res = await fetch('/api/expenses', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setExpenses(data || []);
-      }
+      const [expRes, budRes] = await Promise.all([
+        fetch('/api/expenses', { headers: { Authorization: `Bearer ${token}` } }),
+        fetch('/api/budgets', { headers: { Authorization: `Bearer ${token}` } })
+      ]);
+      if (expRes.ok) setExpenses(await expRes.json());
+      if (budRes.ok) setBudgets(await budRes.json());
     } catch (e) {
-      console.error('Error fetching expenses', e);
+      console.error('Error fetching data', e);
     }
   };
 
   useEffect(() => {
     if (token) {
-      fetchExpenses();
+      fetchData();
     }
   }, [token]);
+
+  useEffect(() => {
+    if (expenses.length > 0 || budgets.length > 0) {
+      const notifs = [];
+      const now = new Date();
+      const currentMonth = now.toISOString().slice(0, 7);
+      const realExpenses = expenses.filter(e => e.type !== 'income');
+
+      const categoryTotals = {};
+      realExpenses.forEach(e => {
+        const expMonth = new Date(e.date).toISOString().slice(0, 7);
+        if (expMonth === currentMonth) {
+          categoryTotals[e.category] = (categoryTotals[e.category] || 0) + e.amount;
+        }
+      });
+
+      const readIds = JSON.parse(localStorage.getItem('readNotifications') || '[]');
+      const clearedIds = JSON.parse(localStorage.getItem('clearedNotifications') || '[]');
+      let idCounter = 1;
+
+      const addNotif = (type, title, message, color) => {
+        const id = `notif_${idCounter++}_${title.replace(/\s+/g, '')}`;
+        if (clearedIds.includes(id)) return;
+        notifs.push({
+          id, title, msg: message, color, isRead: readIds.includes(id)
+        });
+      };
+
+      // 1. Budgets
+      let allUnderBudget = true;
+      budgets.forEach(b => {
+        const spent = categoryTotals[b.category] || 0;
+        if (spent > b.limit) {
+          addNotif('Danger', 'Budget Exceeded', `⚠️ Exceeded ${b.category} budget by ₹${(spent - b.limit).toLocaleString()}.`, 'pink');
+          allUnderBudget = false;
+        } else if (spent >= b.limit * 0.8) {
+          addNotif('Warning', 'Budget Near Limit', `⚠️ Used ${Math.round((spent / b.limit) * 100)}% of ${b.category} budget.`, 'amber');
+          allUnderBudget = false;
+        }
+      });
+
+      if (budgets.length > 0 && allUnderBudget) {
+        addNotif('Success', 'Goal Achieved', `🎉 Stayed within all budgets this month.`, 'emerald');
+      }
+
+      // 2. Large Transactions
+      const recentLarge = realExpenses.filter(e => e.amount >= 5000 && new Date(e.date) > new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
+      recentLarge.forEach(e => addNotif('Warning', 'Large Transaction', `💸 ₹${e.amount.toLocaleString()} spent on ${e.merchant || e.category}.`, 'amber'));
+
+      // 3. AI Insights
+      const totalSpent = Object.values(categoryTotals).reduce((a, b) => a + b, 0);
+      Object.keys(categoryTotals).forEach(cat => {
+        if (categoryTotals[cat] > totalSpent * 0.4 && totalSpent > 0) {
+          addNotif('Danger', 'Unusual Spike', `🚨 ${cat} accounts for ${Math.round((categoryTotals[cat] / totalSpent) * 100)}% of expenses!`, 'pink');
+        }
+      });
+
+      const topCategory = Object.keys(categoryTotals).reduce((a, b) => categoryTotals[a] > categoryTotals[b] ? a : b, null);
+      if (topCategory && categoryTotals[topCategory] > 1000) {
+        addNotif('AI', 'AI Saving Suggestion', `💡 Reduce ${topCategory} by 20% to save ₹${Math.round(categoryTotals[topCategory] * 0.2).toLocaleString()}.`, 'indigo');
+      }
+
+      addNotif('Info', 'Monthly Report', `📊 Monthly spending summary is ready.`, 'indigo');
+
+      // Upcoming Bills are handled below
+      setNotifications(prev => {
+        const bills = prev.filter(n => n.id.toString().startsWith('bill-'));
+        return [...notifs, ...bills];
+      });
+    }
+  }, [expenses, budgets]);
 
   // Fetch dynamic subscription metrics
   useEffect(() => {
@@ -82,6 +209,32 @@ const Dashboard = () => {
             return sum + (s.billingCycle === 'yearly' ? Math.round(amount / 12) : amount);
           }, 0);
           setSubCost(cost);
+
+          const bills = active
+            .map(s => {
+              const diffTime = new Date(s.nextBillingDate || Date.now()) - new Date();
+              const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+              let timeStr = diffDays === 1 ? 'Tomorrow' : diffDays === 0 ? 'Today' : diffDays < 0 ? 'Overdue' : `${diffDays} days`;
+              return { id: s._id || s.name, name: s.name, timeStr, days: diffDays };
+            })
+            .sort((a, b) => a.days - b.days)
+            .slice(0, 2);
+
+          setUpcomingBills(bills);
+
+          const billNotifs = bills.filter(b => b.days <= 3).map(b => ({
+            id: `bill-${b.id}`,
+            title: '⚠️ Upcoming Bill',
+            msg: `${b.name} is due ${b.timeStr.toLowerCase()}.`,
+            color: 'pink',
+            isRead: false
+          }));
+          setNotifications(prev => {
+            const others = prev.filter(n => !n.id.toString().startsWith('bill-'));
+            const cleared = JSON.parse(localStorage.getItem('clearedNotifications') || '[]');
+            const finalBills = billNotifs.filter(b => !cleared.includes(b.id));
+            return [...others, ...finalBills];
+          });
         }
       } catch (e) {
         console.error('Error fetching subscriptions metrics', e);
@@ -120,7 +273,7 @@ const Dashboard = () => {
     try {
       const res = await fetch('/api/expenses', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(expense) });
       const data = await res.json();
-      if (res.ok) { showToast('Expense added!'); closeModal(); setExpense({ merchant: '', amount: '', category: 'Food', date: new Date().toISOString().slice(0, 10), notes: '' }); fetchExpenses(); }
+      if (res.ok) { showToast('Expense added!'); closeModal(); setExpense({ merchant: '', amount: '', category: 'Food', date: new Date().toISOString().slice(0, 10), notes: '' }); fetchData(); }
       else showToast(data.message || 'Failed', 'error');
     } catch { showToast('Error adding expense', 'error'); }
     setLoading(false);
@@ -133,7 +286,7 @@ const Dashboard = () => {
     try {
       const res = await fetch('/api/expenses', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ ...income, category: 'Income', type: 'income' }) });
       const data = await res.json();
-      if (res.ok) { showToast('Income added!'); closeModal(); setIncome({ title: '', amount: '', source: 'Salary', date: new Date().toISOString().slice(0, 10) }); fetchExpenses(); }
+      if (res.ok) { showToast('Income added!'); closeModal(); setIncome({ title: '', amount: '', source: 'Salary', date: new Date().toISOString().slice(0, 10) }); fetchData(); }
       else showToast(data.message || 'Failed', 'error');
     } catch { showToast('Error adding income', 'error'); }
     setLoading(false);
@@ -147,9 +300,20 @@ const Dashboard = () => {
     setLoading(true);
     const fd = new FormData(); fd.append('receipt', receipt);
     try {
-      const res = await fetch('/api/ocr/scan', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd });
+      const res = await fetch('/api/ocr/process', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd });
       const data = await res.json();
-      if (res.ok) { showToast('Receipt uploaded & scanned!'); closeModal(); setReceipt(null); fetchExpenses(); }
+      if (res.ok) { 
+        showToast('Receipt scanned! Please review details.'); 
+        setReceipt(null); 
+        setExpense({ 
+          merchant: data.merchant || '', 
+          amount: data.amount ? String(data.amount) : '', 
+          category: data.category || 'Food', 
+          date: data.date || new Date().toISOString().slice(0, 10), 
+          notes: data.notes || '' 
+        });
+        setModal('expense'); 
+      }
       else showToast(data.message || 'Failed', 'error');
     } catch { showToast('Error uploading receipt', 'error'); }
     setLoading(false);
@@ -279,6 +443,103 @@ const Dashboard = () => {
     navigate('/login');
   };
 
+  // --- Dynamic Dashboard KPI Calculations ---
+  const now = new Date();
+  const currentMonthStr = now.toISOString().slice(0, 7);
+
+  const currentMonthExpenses = expenses.filter(e => e.type !== 'income' && e.date.startsWith(currentMonthStr));
+  const totalExpensesThisMonth = currentMonthExpenses.reduce((sum, e) => sum + e.amount, 0);
+
+  const currentMonthIncomes = expenses.filter(e => e.type === 'income' && e.date.startsWith(currentMonthStr));
+  const totalIncomeThisMonth = currentMonthIncomes.reduce((sum, e) => sum + e.amount, 0);
+
+  // User logic: Budget is driven by their Income. Adding income should increase the remaining budget!
+  const explicitBudgetLimits = budgets.reduce((sum, b) => sum + b.limit, 0);
+  const totalBudgetLimit = Math.max(totalIncomeThisMonth, explicitBudgetLimits) || 0;
+
+  const remainingBudget = Math.max(0, totalBudgetLimit - totalExpensesThisMonth);
+  const budgetSpentPercent = totalBudgetLimit > 0 ? Math.round((totalExpensesThisMonth / totalBudgetLimit) * 100) : 0;
+
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const dailyAverage = now.getDate() > 0 ? Math.round(totalExpensesThisMonth / now.getDate()) : 0;
+
+  const savingsThisMonth = totalIncomeThisMonth - totalExpensesThisMonth;
+  const savingsForecast = now.getDate() > 0 ? Math.round((savingsThisMonth / now.getDate()) * daysInMonth) : 0;
+
+  const lastMonthDate = new Date();
+  lastMonthDate.setMonth(now.getMonth() - 1);
+  const lastMonthStr = lastMonthDate.toISOString().slice(0, 7);
+  const lastMonthExpenses = expenses.filter(e => e.type !== 'income' && e.date.startsWith(lastMonthStr));
+  const totalLastMonth = lastMonthExpenses.reduce((sum, e) => sum + e.amount, 0);
+
+  let vsLastMonth = 0;
+  if (totalLastMonth > 0) {
+    vsLastMonth = Math.round(((totalExpensesThisMonth - totalLastMonth) / totalLastMonth) * 100);
+  }
+
+  // Header dynamic subtext
+  let headerSubtext = "Welcome! Let's start tracking your finances today. 🚀";
+  let headerSubtextColor = "text-indigo-400";
+
+  if (totalLastMonth > 0) {
+    if (vsLastMonth < 0) {
+      headerSubtext = `Excellent! Your spending dropped by ${Math.abs(vsLastMonth)}% this month. 📉`;
+      headerSubtextColor = "text-emerald-400";
+    } else if (vsLastMonth > 0) {
+      headerSubtext = `Heads up! Your spending is up by ${Math.abs(vsLastMonth)}% compared to last month. 📈`;
+      headerSubtextColor = "text-amber-400";
+    } else {
+      headerSubtext = `Your spending is exactly on par with last month. 📊`;
+      headerSubtextColor = "text-cyan-400";
+    }
+  } else if (totalExpensesThisMonth > 0) {
+    headerSubtext = `You've tracked ₹${totalExpensesThisMonth.toLocaleString()} in expenses so far this month.`;
+    headerSubtextColor = "text-emerald-400";
+  }
+
+  // AI Coach Computations
+  let aiScore = 100 - (budgetSpentPercent > 100 ? 100 : budgetSpentPercent);
+  if (totalBudgetLimit === 0) aiScore = 100;
+  if (aiScore < 0) aiScore = 0;
+
+  let aiHeadline = "On Track ✅";
+  let aiSubtext = "Great job! Keep up the good spending habits.";
+  let aiHeadlineColor = "text-emerald-400";
+
+  if (budgetSpentPercent > 100) {
+    aiHeadline = "Overspending Risk ⚠️";
+    aiHeadlineColor = "text-pink-500";
+    aiSubtext = `Exceeded total budget by ₹${(totalExpensesThisMonth - totalBudgetLimit).toLocaleString()}. Please reduce spending.`;
+  } else if (budgetSpentPercent > 80) {
+    aiHeadline = "Budget Near Limit ⚠️";
+    aiHeadlineColor = "text-amber-500";
+    aiSubtext = `You've spent ${budgetSpentPercent}% of your budget. Slow down on non-essentials.`;
+  } else if (currentMonthExpenses.length > 0) {
+    const catSums = {};
+    currentMonthExpenses.forEach(e => {
+      catSums[e.category] = (catSums[e.category] || 0) + e.amount;
+    });
+    let topCat = null;
+    let topAmt = 0;
+    Object.entries(catSums).forEach(([cat, amt]) => {
+      if (amt > topAmt) {
+        topAmt = amt;
+        topCat = cat;
+      }
+    });
+    if (topCat) {
+      aiHeadline = "Spending Insight 💡";
+      aiHeadlineColor = "text-indigo-400";
+      aiSubtext = `${topCat} is your highest expense (₹${topAmt.toLocaleString()}). Try to cut back here.`;
+      const ratio = topAmt / (totalIncomeThisMonth || totalExpensesThisMonth || 1);
+      aiScore = Math.max(40, 100 - Math.round(ratio * 100));
+    }
+  } else {
+    aiHeadline = "Ready to Start 🚀";
+    aiHeadlineColor = "text-indigo-400";
+    aiSubtext = "Add your first expense or budget to get AI insights!";
+  }
+
   return (
     <div className="min-h-screen bg-[#0B0F19] text-slate-100 flex">
       {/* Sidebar */}
@@ -343,14 +604,99 @@ const Dashboard = () => {
       <div className="flex-1 p-6 md:p-10 overflow-y-auto">
         <header className="mb-10">
           {/* Top Bar */}
-          <div className="flex justify-between items-center mb-6 bg-slate-900/50 p-4 rounded-xl glass">
-            <div className="flex items-center space-x-3 w-1/3">
-              <button className="text-slate-400 hover:text-white md:hidden text-xl">
-                <span>☰</span>
-              </button>
-              <input type="text" placeholder="Search Expenses..." className="w-full bg-slate-800/50 border border-slate-700/50 rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm" />
+          <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-6 bg-slate-900/50 p-4 rounded-xl glass gap-4 relative z-40">
+            {/* Left Side: Greeting */}
+            <div className="flex flex-col">
+              <h1 className="text-lg md:text-xl font-bold text-white flex items-center gap-2">
+                {greeting}, {user.name ? user.name.split(' ')[0] : 'User'} 👋
+              </h1>
+              <p className={`text-xs font-medium ${headerSubtextColor}`}>{headerSubtext}</p>
             </div>
-            <div className="flex items-center space-x-6">
+
+            {/* Center: Search Bar */}
+            <div className="flex-1 max-w-md w-full relative">
+              <input
+                type="text"
+                placeholder="Search transactions, budgets, reports..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full bg-slate-800/70 border border-slate-700/50 rounded-lg pl-9 pr-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm shadow-inner"
+              />
+              <span className="absolute left-3 top-2.5 text-slate-400 text-xs">🔍</span>
+
+              {/* Global Search Dropdown */}
+              {searchTerm && (
+                <div className="absolute top-full left-0 right-0 mt-2 bg-slate-900/95 backdrop-blur-xl border border-slate-700 rounded-xl shadow-2xl z-[100] max-h-[80vh] overflow-y-auto">
+                  <div className="p-3 space-y-4">
+                    {/* Navigation Links */}
+                    {['budget', 'report', 'notification', 'setting', 'expense'].filter(kw => kw.includes(searchTerm.toLowerCase())).length > 0 && (
+                      <div>
+                        <div className="text-[10px] text-slate-400 font-bold uppercase px-2 mb-1.5 tracking-wider">Pages & Reports</div>
+                        {['budget', 'report', 'notification', 'setting', 'expense'].filter(kw => kw.includes(searchTerm.toLowerCase())).map(kw => (
+                          <Link key={kw} to={`/${kw}s`} className="block px-3 py-2 hover:bg-slate-800 rounded-lg text-sm text-indigo-400 transition-colors font-medium">
+                            {kw === 'expense' ? 'View Expenses' : `Navigate to ${kw.charAt(0).toUpperCase() + kw.slice(1)}s`} →
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Subscriptions */}
+                    {upcomingBills.filter(b => b.name.toLowerCase().includes(searchTerm.toLowerCase())).length > 0 && (
+                      <div>
+                        <div className="text-[10px] text-slate-400 font-bold uppercase px-2 mb-1.5 tracking-wider">Subscriptions</div>
+                        {upcomingBills.filter(b => b.name.toLowerCase().includes(searchTerm.toLowerCase())).map(b => (
+                          <div key={b.id} className="px-3 py-2 hover:bg-slate-800 rounded-lg text-sm text-slate-200 flex justify-between">
+                            <span>{b.name}</span>
+                            <span className="text-xs text-amber-500">{b.timeStr}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Transactions */}
+                    {(() => {
+                      const st = searchTerm.toLowerCase();
+                      const trans = expenses.filter(e =>
+                        (e.merchant || e.title || '').toLowerCase().includes(st) ||
+                        (e.category || '').toLowerCase().includes(st) ||
+                        new Date(e.date).toLocaleDateString('en-IN', { month: 'short' }).toLowerCase().includes(st)
+                      );
+                      if (trans.length === 0) return null;
+                      return (
+                        <div>
+                          <div className="text-[10px] text-slate-400 font-bold uppercase px-2 mb-1.5 tracking-wider">Transactions ({trans.length})</div>
+                          {trans.slice(0, 10).map((e, idx) => (
+                            <div key={idx} className="px-3 py-2 hover:bg-slate-800 rounded-lg text-sm text-slate-200 flex justify-between">
+                              <span className="flex items-center gap-2">
+                                {e.merchant || e.title}
+                                <span className="text-[9px] bg-slate-700/50 text-slate-400 px-1.5 py-0.5 rounded-full">{e.category}</span>
+                              </span>
+                              <span className={`font-bold ${e.type === 'income' ? 'text-emerald-400' : 'text-white'}`}>
+                                {e.type === 'income' ? '+' : '-'}₹{e.amount}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )
+                    })()}
+
+                    {/* No results */}
+                    {!expenses.some(e => (e.merchant || e.title || '').toLowerCase().includes(searchTerm.toLowerCase()) || (e.category || '').toLowerCase().includes(searchTerm.toLowerCase()) || new Date(e.date).toLocaleDateString('en-IN', { month: 'short' }).toLowerCase().includes(searchTerm.toLowerCase())) &&
+                      !upcomingBills.some(b => b.name.toLowerCase().includes(searchTerm.toLowerCase())) &&
+                      !['budget', 'report', 'notification', 'setting', 'expense'].some(kw => kw.includes(searchTerm.toLowerCase())) && (
+                        <div className="p-6 text-center">
+                          <div className="text-2xl mb-2">🔍</div>
+                          <div className="text-sm text-slate-300 font-medium">No matches found for "{searchTerm}"</div>
+                          <div className="text-xs text-slate-500 mt-1">Try searching for Food, Swiggy, or May report</div>
+                        </div>
+                      )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Right Side: Selectors & Actions */}
+            <div className="flex items-center justify-end space-x-4 w-full lg:w-auto">
               <select className="bg-slate-800/50 border border-slate-700/50 rounded-lg px-3 py-1.5 text-sm text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500">
                 <option>May 2026</option>
                 <option>April 2026</option>
@@ -370,8 +716,8 @@ const Dashboard = () => {
                   )}
                 </button>
                 {showNotifications && (
-                  <div className="absolute right-0 mt-3 w-80 bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl z-50 overflow-hidden">
-                    <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
+                  <div className="absolute right-0 top-full mt-3 w-80 bg-slate-900 border border-slate-700/60 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] z-[100] overflow-hidden">
+                    <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/90 backdrop-blur-md">
                       <span className="text-sm font-bold text-white">🔔 Notifications</span>
                       <div className="flex gap-2">
                         <button onClick={markAllRead} className="text-[10px] text-indigo-400 hover:text-indigo-300 font-semibold">Mark all read</button>
@@ -382,7 +728,7 @@ const Dashboard = () => {
                       {notifications.length === 0 ? (
                         <div className="text-center py-8 text-slate-500 text-xs">No notifications</div>
                       ) : notifications.map(n => (
-                        <div key={n.id} className={`flex items-start gap-3 px-4 py-3 hover:bg-slate-800/40 transition-colors ${n.read ? 'opacity-50' : ''}`}>
+                        <div key={n.id} className={`flex items-start gap-3 px-4 py-3 hover:bg-slate-800/40 transition-colors ${n.isRead ? 'opacity-50' : ''}`}>
                           <div className={`mt-0.5 w-1.5 h-1.5 rounded-full shrink-0 bg-${n.color}-400`}></div>
                           <div className="flex-1 min-w-0">
                             <div className={`text-xs font-semibold text-${n.color}-400`}>{n.title}</div>
@@ -403,13 +749,13 @@ const Dashboard = () => {
               <button
                 onClick={toggleDarkMode}
                 title={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-                className="text-slate-400 hover:text-white transition-all text-xl hover:scale-110 active:scale-95"
+                className="text-slate-400 hover:text-white transition-all text-lg hover:scale-110 active:scale-95"
               >
                 <span>{darkMode ? '🌙' : '☀️'}</span>
               </button>
-              <div className="flex items-center space-x-2 cursor-pointer">
-                <div className="w-8 h-8 bg-indigo-600 rounded-full flex items-center justify-center font-bold text-sm">{user.name ? user.name[0].toUpperCase() : 'U'}</div>
-                <span className="text-sm font-medium hidden sm:block">{user.name}</span>
+              <div className="flex items-center space-x-2 cursor-pointer border-l border-slate-700 pl-4">
+                <div className="w-8 h-8 bg-indigo-600 rounded-full flex items-center justify-center font-bold text-sm shadow-md">{user.name ? user.name[0].toUpperCase() : 'U'}</div>
+                <span className="text-sm font-medium hidden sm:block">{user.name ? user.name.split(' ')[0] : 'User'}</span>
               </div>
             </div>
           </div>
@@ -450,14 +796,14 @@ const Dashboard = () => {
           <div className="glass-card flex flex-col justify-between p-5">
             <div>
               <div className="text-slate-400 mb-1 text-xs uppercase tracking-wider">Total Expenses</div>
-              <div className="text-3xl font-bold text-white">₹45,200</div>
-              <div className="text-xs text-emerald-400 mt-1 flex items-center">
-                <span>↑ 12%</span>
+              <div className="text-3xl font-bold text-white">₹{totalExpensesThisMonth.toLocaleString()}</div>
+              <div className={`text-xs mt-1 flex items-center ${vsLastMonth > 0 ? 'text-pink-500' : 'text-emerald-400'}`}>
+                <span>{vsLastMonth > 0 ? '↑' : '↓'} {Math.abs(vsLastMonth)}%</span>
                 <span className="ml-1 text-slate-500">vs last month</span>
               </div>
             </div>
             <div className="h-8 mt-3">
-              <svg className="w-full h-full text-indigo-500" viewBox="0 0 100 20">
+              <svg className={`w-full h-full ${vsLastMonth > 0 ? 'text-pink-500' : 'text-indigo-500'}`} viewBox="0 0 100 20">
                 <path d="M 0 15 Q 20 5, 40 12 T 80 2 T 100 10" fill="none" stroke="currentColor" strokeWidth="2" />
               </svg>
             </div>
@@ -467,11 +813,15 @@ const Dashboard = () => {
           <div className="glass-card flex flex-col justify-between p-5">
             <div>
               <div className="text-slate-400 mb-1 text-xs uppercase tracking-wider">Remaining Budget</div>
-              <div className="text-3xl font-bold text-emerald-400">₹14,800</div>
-              <div className="text-xs text-slate-500 mt-1">76% spent • Daily: ₹1,450</div>
+              <div className={`text-3xl font-bold ${remainingBudget === 0 && totalBudgetLimit > 0 ? 'text-pink-500' : 'text-emerald-400'}`}>
+                ₹{remainingBudget.toLocaleString()}
+              </div>
+              <div className="text-xs text-slate-500 mt-1">
+                {totalBudgetLimit > 0 ? `${budgetSpentPercent}% spent • Daily: ₹${dailyAverage.toLocaleString()}` : 'No active budgets'}
+              </div>
             </div>
             <div className="h-8 mt-3">
-              <svg className="w-full h-full text-emerald-500" viewBox="0 0 100 20">
+              <svg className={`w-full h-full ${remainingBudget === 0 && totalBudgetLimit > 0 ? 'text-pink-500' : 'text-emerald-500'}`} viewBox="0 0 100 20">
                 <path d="M 0 5 Q 20 15, 40 10 T 80 18 T 100 5" fill="none" stroke="currentColor" strokeWidth="2" />
               </svg>
             </div>
@@ -481,11 +831,15 @@ const Dashboard = () => {
           <div className="glass-card flex flex-col justify-between p-5">
             <div>
               <div className="text-slate-400 mb-1 text-xs uppercase tracking-wider">Savings This Month</div>
-              <div className="text-3xl font-bold text-cyan-400">₹14,800</div>
-              <div className="text-xs text-cyan-400 mt-1">Forecast: ₹18,000</div>
+              <div className={`text-3xl font-bold ${savingsThisMonth < 0 ? 'text-pink-500' : 'text-cyan-400'}`}>
+                {savingsThisMonth < 0 ? '-' : ''}₹{Math.abs(savingsThisMonth).toLocaleString()}
+              </div>
+              <div className={`text-xs mt-1 ${savingsForecast < 0 ? 'text-pink-500/70' : 'text-cyan-400/70'}`}>
+                Forecast: {savingsForecast < 0 ? '-' : ''}₹{Math.abs(savingsForecast).toLocaleString()}
+              </div>
             </div>
             <div className="h-8 mt-3">
-              <svg className="w-full h-full text-cyan-500" viewBox="0 0 100 20">
+              <svg className={`w-full h-full ${savingsThisMonth < 0 ? 'text-pink-500' : 'text-cyan-500'}`} viewBox="0 0 100 20">
                 <path d="M 0 15 L 20 12 L 40 14 L 60 8 L 80 5 L 100 2" fill="none" stroke="currentColor" strokeWidth="2" />
               </svg>
             </div>
@@ -496,15 +850,17 @@ const Dashboard = () => {
             <div>
               <div className="flex justify-between items-center mb-1">
                 <div className="text-xs text-slate-400 uppercase tracking-wider">AI Coach</div>
-                <span className="text-xs bg-indigo-600/30 text-indigo-300 px-2 py-0.5 rounded-full">Score: 78</span>
+                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${aiScore < 50 ? 'bg-pink-600/30 text-pink-400' : aiScore < 80 ? 'bg-amber-600/30 text-amber-400' : 'bg-indigo-600/30 text-indigo-300'}`}>
+                  Score: {aiScore}
+                </span>
               </div>
-              <div className="text-sm font-bold text-gradient mb-2">Overspending Risk ⚠️</div>
-              <div className="text-xs text-slate-300 line-clamp-2">Food spending increased 20%. Action: Reduce dining out.</div>
+              <div className={`text-sm font-bold mb-2 ${aiHeadlineColor}`}>{aiHeadline}</div>
+              <div className="text-xs text-slate-300 line-clamp-2" title={aiSubtext}>{aiSubtext}</div>
             </div>
-            <button className="text-xs text-indigo-400 hover:text-indigo-300 font-medium mt-2 flex items-center justify-between">
+            <Link to="/analytics" className="text-xs text-indigo-400 hover:text-indigo-300 font-medium mt-2 flex items-center justify-between">
               <span>View Full Insights</span>
               <span>→</span>
-            </button>
+            </Link>
           </div>
         </div>
 
@@ -652,9 +1008,15 @@ const Dashboard = () => {
               <Link to="/expenses" className="text-xs text-indigo-400 hover:text-indigo-300">View All</Link>
             </div>
 
-            {expenses.length > 0 ? (
+            {expenses.filter(e =>
+              (e.merchant || e.title || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+              (e.category || '').toLowerCase().includes(searchTerm.toLowerCase())
+            ).length > 0 ? (
               <div className="flex-1 space-y-2.5 overflow-y-auto pr-1">
-                {expenses.slice(0, 3).map((exp, idx) => (
+                {expenses.filter(e =>
+                  (e.merchant || e.title || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                  (e.category || '').toLowerCase().includes(searchTerm.toLowerCase())
+                ).slice(0, 3).map((exp, idx) => (
                   <div key={exp._id || idx} className="bg-slate-900/60 p-2.5 rounded-xl border border-slate-800/80 flex items-center justify-between gap-3 text-xs">
                     <div className="flex items-center gap-2">
                       <span className="text-base bg-slate-850 p-1.5 rounded-lg border border-slate-800">
@@ -676,6 +1038,10 @@ const Dashboard = () => {
                   </div>
                 ))}
               </div>
+            ) : searchTerm ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-center p-4">
+                <div className="text-slate-500 text-xs mb-3">No matching transactions found.</div>
+              </div>
             ) : (
               <div className="flex-1 flex flex-col items-center justify-center text-center p-4">
                 <div className="w-10 h-10 bg-slate-800 rounded-full flex items-center justify-center text-xl mb-2">💸</div>
@@ -696,14 +1062,16 @@ const Dashboard = () => {
             <div>
               <div className="text-xs text-slate-400 uppercase tracking-wider mb-2">Upcoming Bills</div>
               <div className="space-y-1 text-xs">
-                <div className="flex justify-between">
-                  <span className="text-white">Netflix</span>
-                  <span className="text-pink-500">Tomorrow</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-white">Electricity</span>
-                  <span className="text-amber-500">5 days</span>
-                </div>
+                {upcomingBills.length > 0 ? (
+                  upcomingBills.map(b => (
+                    <div key={b.id} className="flex justify-between">
+                      <span className="text-white truncate max-w-[100px]">{b.name}</span>
+                      <span className={b.days <= 3 ? "text-pink-500" : "text-amber-500"}>{b.timeStr}</span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-slate-500 italic">No upcoming bills</div>
+                )}
               </div>
             </div>
             <button className="text-xs text-indigo-400 hover:text-indigo-300 text-left">View All Bills →</button>
@@ -712,20 +1080,29 @@ const Dashboard = () => {
           {/* Goals Widget */}
           <div className="glass-card p-4 flex flex-col justify-between h-32">
             <div>
-              <div className="text-xs text-slate-400 uppercase tracking-wider mb-2">Financial Goals</div>
-              <div className="space-y-2 text-xs">
-                <div>
-                  <div className="flex justify-between mb-0.5">
-                    <span className="text-white">MacBook</span>
-                    <span className="text-cyan-400">37%</span>
-                  </div>
-                  <div className="h-1 bg-slate-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-cyan-500 rounded-full" style={{ width: '37%' }}></div>
+              <div className="text-xs text-slate-400 uppercase tracking-wider mb-2 flex justify-between items-center">
+                <span>Financial Goals</span>
+                <button onClick={handleEditGoal} className="text-indigo-400 hover:text-indigo-300">Edit ✎</button>
+              </div>
+              {goal.name ? (
+                <div className="space-y-2 text-xs">
+                  <div>
+                    <div className="flex justify-between mb-0.5">
+                      <span className="text-white truncate max-w-[100px]" title={goal.name}>{goal.name}</span>
+                      <span className="text-cyan-400">{goal.progress}%</span>
+                    </div>
+                    <div className="h-1 bg-slate-800 rounded-full overflow-hidden">
+                      <div className="h-full bg-cyan-500 rounded-full transition-all duration-500" style={{ width: `${goal.progress}%` }}></div>
+                    </div>
                   </div>
                 </div>
-              </div>
+              ) : (
+                <div className="text-slate-500 italic mt-2 text-xs">
+                  No goal set. Add a target!
+                </div>
+              )}
             </div>
-            <button className="text-xs text-indigo-400 hover:text-indigo-300 text-left">View All Goals →</button>
+            <button onClick={handleEditGoal} className="text-xs text-indigo-400 hover:text-indigo-300 text-left">Update Goal →</button>
           </div>
 
           {/* Subscriptions Widget */}
@@ -743,8 +1120,13 @@ const Dashboard = () => {
             <div>
               <div className="text-xs text-slate-400 uppercase tracking-wider mb-2">Notifications</div>
               <div className="space-y-1 text-xs">
-                <div className="text-emerald-400 truncate">📈 Savings improved!</div>
-                <div className="text-pink-500 truncate">⚠️ Budget warning.</div>
+                {notifications.filter(n => !n.isRead).length > 0 ? notifications.filter(n => !n.isRead).slice(0, 2).map(n => (
+                  <div key={n.id} className={`text-${n.color}-400 truncate`} title={n.title}>
+                    {n.title}
+                  </div>
+                )) : (
+                  <div className="text-slate-500 italic">No new alerts</div>
+                )}
               </div>
             </div>
             <Link to="/notifications" className="text-xs text-indigo-400 hover:text-indigo-300 text-left">View All →</Link>

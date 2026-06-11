@@ -63,8 +63,8 @@ const Notifications = () => {
       }
     });
 
-    const readIds = JSON.parse(localStorage.getItem('readNotifications') || '[]');
-    const clearedIds = JSON.parse(localStorage.getItem('clearedNotifications') || '[]');
+    const readIds = JSON.parse(localStorage.getItem(`readNotifications_${user._id}`) || '[]');
+    const clearedIds = JSON.parse(localStorage.getItem(`clearedNotifications_${user._id}`) || '[]');
     let idCounter = 1;
 
     const addNotif = (categoryGroup, type, title, message, icon, timeStr, linkPath) => {
@@ -174,37 +174,48 @@ const Notifications = () => {
       );
     }
 
-    // 6. Monthly Summary Info
-    addNotif('Alerts', 'Info', 'Monthly Spending Report', `📊 Your monthly spending summary is ready to view.`, '📊', '3d ago', '/reports');
+    // 6. Monthly Summary Info (Only if they actually have expenses)
+    if (realExpenses.length > 0) {
+      addNotif('Alerts', 'Info', 'Monthly Spending Report', `📊 Your monthly spending summary is ready to view.`, '📊', '3d ago', '/reports');
+    }
 
-    // 7. Subscriptions due
-    addNotif('Payments', 'Info', 'Subscription Reminder', `🔔 Netflix subscription payment of ₹499 is due tomorrow.`, '🔔', '4d ago', '/expenses');
+    // 7. Welcome Notification for Brand New Accounts
+    if (expenses.length === 0 && budgets.length === 0) {
+      addNotif(
+        'Alerts', 
+        'Success', 
+        'Welcome to FinTrack AI!', 
+        '👋 Welcome! Get started by adding your first budget or expense to activate your AI financial coach.', 
+        '✨', 
+        'Just now', 
+        '/dashboard'
+      );
+    }
 
     setNotifications(notifs);
   };
 
   const markAsRead = (id) => {
-    const readIds = JSON.parse(localStorage.getItem('readNotifications') || '[]');
+    const readIds = JSON.parse(localStorage.getItem(`readNotifications_${user._id}`) || '[]');
     if (!readIds.includes(id)) {
       readIds.push(id);
-      localStorage.setItem('readNotifications', JSON.stringify(readIds));
+      localStorage.setItem(`readNotifications_${user._id}`, JSON.stringify(readIds));
       generateNotifications();
     }
   };
 
   const markAllAsRead = () => {
     const allIds = notifications.map(n => n.id);
-    localStorage.setItem('readNotifications', JSON.stringify(allIds));
+    localStorage.setItem(`readNotifications_${user._id}`, JSON.stringify(allIds));
     generateNotifications();
     showToast('✅ All marked as read!');
   };
 
   const clearAllNotifications = () => {
     const allIds = notifications.map(n => n.id);
-    const clearedIds = JSON.parse(localStorage.getItem('clearedNotifications') || '[]');
+    const clearedIds = JSON.parse(localStorage.getItem(`clearedNotifications_${user._id}`) || '[]');
     const uniqueNewCleared = Array.from(new Set([...clearedIds, ...allIds]));
-
-    localStorage.setItem('clearedNotifications', JSON.stringify(uniqueNewCleared));
+    localStorage.setItem(`clearedNotifications_${user._id}`, JSON.stringify(uniqueNewCleared));
     generateNotifications();
     showToast('🗑️ Cleared all notifications!');
   };
