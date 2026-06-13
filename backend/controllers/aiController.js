@@ -1,6 +1,5 @@
 const { GoogleGenAI } = require('@google/genai');
-const Expense = require('../models/Expense');
-const Budget = require('../models/Budget');
+const prisma = require('../config/prismaClient');
 
 // Initialize Gemini SDK with API key from environment
 const aiKey = process.env.GEMINI_API_KEY || '';
@@ -16,8 +15,8 @@ exports.getInsights = async (req, res) => {
     const userId = req.user.id;
 
     // Fetch all user records
-    const expenses = await Expense.find({ user: userId });
-    const budgets = await Budget.find({ user: userId });
+    const expenses = await prisma.expense.findMany({ where: { userId } });
+    const budgets = await prisma.budget.findMany({ where: { userId } });
 
     const realExpenses = expenses.filter(e => e.type !== 'income');
     const realIncome = expenses.filter(e => e.type === 'income');
@@ -130,8 +129,8 @@ exports.chat = async (req, res) => {
       return res.status(400).json({ message: 'Message is required' });
     }
 
-    const expenses = await Expense.find({ user: userId });
-    const budgets = await Budget.find({ user: userId });
+    const expenses = await prisma.expense.findMany({ where: { userId } });
+    const budgets = await prisma.budget.findMany({ where: { userId } });
 
     const realExpenses = expenses.filter(e => e.type !== 'income');
     const realIncome = expenses.filter(e => e.type === 'income');
@@ -145,7 +144,7 @@ exports.chat = async (req, res) => {
     const q = message.toLowerCase();
     let reply = "";
 
-    // 1. Generate high-fidelity context-aware dynamic response based on active MongoDB records
+    // 1. Generate high-fidelity context-aware dynamic response based on active PostgreSQL records
     if (q.includes('overspent') || q.includes('exceed') || q.includes('spend') || q.includes('limit') || q.includes('large')) {
       const categoryTotals = {};
       realExpenses.forEach(e => {
@@ -198,15 +197,15 @@ exports.chat = async (req, res) => {
         reply = `🔁 No active subscription bills detected in recent logs. Go to Settings → Connected Portals to synchronize billing webhooks automatically.`;
       }
     } else if (q.includes('hi') || q.includes('hello') || q.includes('hey') || q.includes('help')) {
-      reply = `👋 Hello! I am your FinTrack AI Financial Coach. Ask me: 'Where did I overspend this month?', 'Can I save ₹10,000?', or 'Analyze my active subscriptions' to see direct calculations on your MongoDB database!`;
+      reply = `👋 Hello! I am your Smart Budget AI Financial Coach. Ask me: 'Where did I overspend this month?', 'Can I save ₹10,000?', or 'Analyze my active subscriptions' to see direct calculations on your live database!`;
     } else {
-      reply = `📊 FinTrack Coach Report: Total Income is ₹${totalIncome.toLocaleString()} and Total Expenses are ₹${totalSpent.toLocaleString()}, leaving ₹${(totalIncome - totalSpent).toLocaleString()} in net savings. Let me know if you want me to analyze overspending or check subscription bills!`;
+      reply = `📊 Smart Budget Coach Report: Total Income is ₹${totalIncome.toLocaleString()} and Total Expenses are ₹${totalSpent.toLocaleString()}, leaving ₹${(totalIncome - totalSpent).toLocaleString()} in net savings. Let me know if you want me to analyze overspending or check subscription bills!`;
     }
 
     // 2. Override with live Gemini API model if active & healthy
     if (aiKey) {
       try {
-        const prompt = `You are FinTrack AI, a highly conversational, state-of-the-art financial coach.
+        const prompt = `You are Smart Budget AI, a highly conversational, state-of-the-art financial coach.
 Here is the user's live database summary:
 - Total Income: ₹${totalIncome}
 - Total Expenses: ₹${totalSpent}
@@ -249,7 +248,9 @@ exports.simulate = async (req, res) => {
     const { category, reductionPercent } = req.body;
     const userId = req.user.id;
 
-    const expenses = await Expense.find({ user: userId, category, type: { $ne: 'income' } });
+    const expenses = await prisma.expense.findMany({
+      where: { userId, category, type: { not: 'income' } },
+    });
     const totalCategorySpent = expenses.reduce((sum, e) => sum + e.amount, 0);
 
     const factor = (reductionPercent || 20) / 100;

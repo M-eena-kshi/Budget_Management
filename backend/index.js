@@ -3,13 +3,9 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 require('dotenv').config();
-const connectDB = require('./config/db');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-
-// Connect to Database
-connectDB();
 
 // Middleware
 app.use(helmet());
@@ -26,10 +22,11 @@ app.use('/api/ai', require('./routes/aiRoutes'));
 app.use('/api/subscriptions', require('./routes/subscriptionRoutes'));
 
 app.get('/', (req, res) => {
-  res.json({ message: 'Smart Expense & Budget Management API is running' });
+  res.json({ message: 'Smart Expense & Budget Management API is running (PostgreSQL)' });
 });
 
 // Start server
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
+  console.log(`Database: PostgreSQL (Aiven)`);
 });
