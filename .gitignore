@@ -1,36 +1,16 @@
-# Dependencies
-backend/node_modules/
-
-# Environment Variables
-backend/.env
+node_modules/
+.env
 .env.local
 .env.development.local
+.env.test.local
 .env.production.local
 
-# Build folders
-build/
 dist/
-.next/
+build/
 
-# Logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# OS files
 .DS_Store
-Thumbs.db
 
-# IDE
-.vscode/
-.idea/
-
-# Coverage
-coverage/
-
-# Cache
-.cache/
-
-# Uploaded files (if storing locally)
 uploads/
+
+backend/node_modules/
+frontend/node_modules/

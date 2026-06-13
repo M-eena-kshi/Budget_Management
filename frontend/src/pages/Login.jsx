@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 
 const Login = () => {
   const navigate = useNavigate();
@@ -92,9 +92,9 @@ const Login = () => {
                 <input type="checkbox" className="rounded bg-slate-800 border-slate-700 text-indigo-600 focus:ring-indigo-500 mr-2" />
                 Remember me
               </label>
-              <a href="#" className="text-indigo-400 hover:text-indigo-300 transition-colors">
+              <Link to="/forgot-password" className="text-indigo-400 hover:text-indigo-300 transition-colors font-medium">
                 Forgot password?
-              </a>
+              </Link>
             </div>
 
             <button type="submit" className="w-full btn-gradient">

@@ -357,11 +357,11 @@ const AIAssistant = () => {
                 <div className="grid grid-cols-2 gap-4 mt-4 pt-4 border-t border-slate-800">
                   <div>
                     <div className="text-xs text-slate-400 uppercase">Predicted Month-End Spends</div>
-                    <div className="text-xl font-bold text-pink-400">₹{insights?.forecast?.monthEndExpenses?.toLocaleString() || '₹48,500'}</div>
+                    <div className="text-xl font-bold text-pink-400">₹{insights?.forecast?.monthEndExpenses?.toLocaleString() || '0'}</div>
                   </div>
                   <div>
                     <div className="text-xs text-slate-400 uppercase">Estimated Savings Potential</div>
-                    <div className="text-xl font-bold text-emerald-400">₹{insights?.forecast?.expectedSavings?.toLocaleString() || '₹12,000'}</div>
+                    <div className="text-xl font-bold text-emerald-400">₹{insights?.forecast?.expectedSavings?.toLocaleString() || '0'}</div>
                   </div>
                 </div>
               </div>
@@ -589,15 +589,6 @@ const AIAssistant = () => {
                         </div>
                       </div>
                     )}
-                    
-                    {/* Recurring Subscriptions Warning */}
-                    <div className="flex items-start space-x-3 bg-amber-950/20 border border-amber-500/20 p-3 rounded-xl">
-                      <span className="text-xl shrink-0 mt-0.5">⚠️</span>
-                      <div>
-                        <div className="text-xs font-semibold text-amber-400">Subscription Intelligence Alert</div>
-                        <div className="text-[11px] text-slate-400 mt-0.5">Your <strong>Spotify Premium</strong> subscription has been completely inactive for 28 days. Consider cancelling.</div>
-                      </div>
-                    </div>
                   </div>
                 </div>
 
@@ -621,7 +612,7 @@ const AIAssistant = () => {
                     {insights?.budgetPerformance && insights.budgetPerformance.length > 0 ? (
                       insights.budgetPerformance.map((bud, idx) => {
                         const recommendedLimit = Math.max(Math.round(bud.spent * 0.85), 2000);
-                        if (recommendedLimit >= bud.limit) return null; // only optimize if spent is high or suggest a cut
+                        if (recommendedLimit >= bud.limit) return null;
                         
                         return (
                           <div key={idx} className="bg-slate-900/50 border border-slate-800/80 p-3 rounded-xl flex items-center justify-between">
@@ -641,24 +632,11 @@ const AIAssistant = () => {
                         );
                       })
                     ) : (
-                      <p className="text-xs text-slate-500 italic">No budget limits registered to optimize.</p>
-                    )}
-                    
-                    {/* Default mock suggestion if all budgets optimized */}
-                    <div className="bg-slate-900/50 border border-slate-800/80 p-3 rounded-xl flex items-center justify-between">
-                      <div>
-                        <div className="text-xs font-semibold text-white">🍔 Food Budget Limit</div>
-                        <div className="text-[10px] text-slate-400 mt-0.5">
-                          Current: ₹8,000 | Historical optimum: <strong className="text-indigo-400">₹6,500</strong>
-                        </div>
+                      <div className="text-center py-8 text-slate-500">
+                        <div className="text-3xl mb-2">🎯</div>
+                        <p className="text-xs">No budgets set yet. Add budgets to get AI optimization tips!</p>
                       </div>
-                      <button
-                        onClick={() => applyBudgetSuggestion('Food', 6500)}
-                        className="btn-gradient text-[10px] font-bold px-3 py-1.5 rounded-lg shrink-0"
-                      >
-                        Apply Suggestion
-                      </button>
-                    </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -670,29 +648,32 @@ const AIAssistant = () => {
                   <p className="text-xs text-slate-400 mb-4">Continuous auditing of monthly recurring subscription billing</p>
                   
                   <div className="divide-y divide-slate-800/50">
-                    {(insights?.subscriptions || [
-                      { name: 'Netflix Premium', cost: 499, status: 'Active', usage: 'High', lastUsed: 'Yesterday' },
-                      { name: 'Spotify Music', cost: 299, status: 'Active', usage: 'Unused', lastUsed: '28 days ago' },
-                      { name: 'Amazon Prime', cost: 179, status: 'Active', usage: 'Medium', lastUsed: '8 days ago' }
-                    ]).map((sub, idx) => (
-                      <div key={idx} className="flex justify-between items-center py-2.5 first:pt-0 last:pb-0">
-                        <div className="flex items-center space-x-3">
-                          <div className="text-xl font-bold">💳</div>
-                          <div>
-                            <div className="text-xs font-semibold text-white">{sub.name}</div>
-                            <div className="text-[10px] text-slate-500">Last billing active | Used: {sub.lastUsed}</div>
+                    {insights?.subscriptions && insights.subscriptions.length > 0 ? (
+                      insights.subscriptions.map((sub, idx) => (
+                        <div key={idx} className="flex justify-between items-center py-2.5 first:pt-0 last:pb-0">
+                          <div className="flex items-center space-x-3">
+                            <div className="text-xl font-bold">💳</div>
+                            <div>
+                              <div className="text-xs font-semibold text-white">{sub.name}</div>
+                              <div className="text-[10px] text-slate-500">Last billing active | Used: {sub.lastUsed}</div>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-xs font-bold text-white">₹{sub.cost}</div>
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${
+                              sub.usage === 'Unused' ? 'bg-red-950 text-red-400' : 'bg-indigo-950 text-indigo-400'
+                            }`}>
+                              {sub.usage}
+                            </span>
                           </div>
                         </div>
-                        <div className="text-right">
-                          <div className="text-xs font-bold text-white">₹{sub.cost}</div>
-                          <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${
-                            sub.usage === 'Unused' ? 'bg-red-950 text-red-400' : 'bg-indigo-950 text-indigo-400'
-                          }`}>
-                            {sub.usage}
-                          </span>
-                        </div>
+                      ))
+                    ) : (
+                      <div className="text-center py-8 text-slate-500">
+                        <div className="text-3xl mb-2">🔁</div>
+                        <p className="text-xs">No subscriptions yet. Add them in the Subscriptions page!</p>
                       </div>
-                    ))}
+                    )}
                   </div>
                 </div>
               </div>

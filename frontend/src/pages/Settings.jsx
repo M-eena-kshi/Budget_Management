@@ -50,6 +50,7 @@ const Settings = () => {
   const [email, setEmail] = useState(localUser.email || '');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [oldPassword, setOldPassword] = useState('');
 
   // Settings State Schema — merged from defaults + localStorage
   const [settings, setSettings] = useState({
@@ -131,7 +132,10 @@ const Settings = () => {
     setSaving(true);
     try {
       const payload = { name, email, settings };
-      if (password) payload.password = password;
+      if (password) {
+        payload.password = password;
+        payload.oldPassword = oldPassword;
+      }
 
       const res = await fetch('/api/auth/update', {
         method: 'PUT',
@@ -146,11 +150,13 @@ const Settings = () => {
         showToast('Configuration synced securely!');
         setPassword('');
         setConfirmPassword('');
+        setOldPassword('');
         const localUser = JSON.parse(localStorage.getItem('user')) || {};
         localUser.name = data.name;
         localUser.email = data.email;
         localUser.settings = data.settings;
         localStorage.setItem('user', JSON.stringify(localUser));
+        window.dispatchEvent(new Event('theme-changed'));
       } else {
         showToast(data.message || 'Error updating settings', 'error');
       }
@@ -176,6 +182,10 @@ const Settings = () => {
         [field]: value
       }));
     }
+    
+    if (field === 'theme' || field === 'accentColor') {
+      window.dispatchEvent(new CustomEvent('theme-preview', { detail: { field, value } }));
+    }
   };
 
   const handleLogout = () => {
@@ -184,31 +194,80 @@ const Settings = () => {
     navigate('/login');
   };
 
-  const handleBackupExport = (format) => {
+  const handleBackupExport = async (format) => {
+    if (format !== 'csv' && format !== 'excel') return;
+    
     showToast(`Compiling safe statement ledger backup [${format.toUpperCase()}]...`);
-    setTimeout(() => {
-      setLastBackupTime('Just now');
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('http://localhost:5001/api/expenses', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      
+      if (!res.ok) throw new Error(data.message || 'Failed to fetch expenses');
+      
+      const header = ['Date', 'Merchant', 'Category', 'Amount', 'Type', 'Notes'];
+      const rows = data.map(exp => [
+        new Date(exp.date).toLocaleDateString(),
+        `"${exp.merchant || ''}"`,
+        exp.category,
+        exp.amount,
+        exp.type || 'expense',
+        `"${exp.notes || ''}"`
+      ]);
+      const content = [header.join(','), ...rows.map(r => r.join(','))].join('\n');
+      
       const element = document.createElement("a");
-      const file = new Blob([JSON.stringify({ settings, timestamp: new Date().toISOString() }, null, 2)], {type: 'text/plain'});
+      const file = new Blob([content], {type: 'text/csv'});
       element.href = URL.createObjectURL(file);
-      element.download = `FinTrack_Ledger_Backup_${new Date().toISOString().split('T')[0]}.${format}`;
+      element.download = `FinTrack_Statement_${new Date().toISOString().split('T')[0]}.csv`;
       document.body.appendChild(element);
       element.click();
       document.body.removeChild(element);
-      showToast(`Statement exported in .${format} format!`);
-    }, 1200);
+      showToast(`Statement exported!`);
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const handleDataPurge = async () => {
+    if (!window.confirm("Are you SURE you want to clear all your transactions and budgets? This cannot be undone!")) {
+      return;
+    }
+    
+    showToast('Purging data...');
+    try {
+      const token = localStorage.getItem('token');
+      
+      // Delete expenses
+      let res = await fetch('http://localhost:5001/api/expenses', {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('Failed to delete expenses');
+      
+      // Delete budgets
+      res = await fetch('http://localhost:5001/api/budgets', {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('Failed to delete budgets');
+      
+      showToast('All transaction data purged successfully!');
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
   };
 
   // Sidebar Tabs Config list with associated descriptions & search tags
   const ALL_TABS = [
     { id: 'profile', label: '👤 Profile & Account', desc: 'Update login email, phone, and passwords', tags: 'name email password avatar info' },
-    { id: 'security', label: '🔒 Security & 2FA', desc: 'Secure sessions, 2FA, and locks', tags: 'security lock encrypted 2fa privacy session' },
     { id: 'appearance', label: '🎨 Appearance Theme', desc: 'Accent colors, theme preview layouts', tags: 'theme appearance style dark light neon colors' },
     { id: 'notifications', label: '🔔 Alerts & Reminders', desc: 'Daily insights, thresholds, AI triggers', tags: 'notifications alerts email reminders bill' },
     { id: 'localization', label: '🌐 Localization & Language', desc: 'Primary currency, languages, date formats', tags: 'localization language currency inr usd format' },
     { id: 'ai', label: '🤖 AI Model Settings', desc: 'Insight runs, thresholds, prompt tones', tags: 'ai engine advisor prompt gemini frequency anomaly' },
-    { id: 'accounts', label: '💳 Bank Connections', desc: 'Plaid linkages, UPI, Razorpay logs', tags: 'bank account razorpay upi connections linking pay' },
-    { id: 'data', label: '💾 Cloud Backups & Exporters', desc: 'Google Drive sync, statement sheets', tags: 'data backup exports pdf csv excel google drive dropbox' },
+    { id: 'privacy', label: '🛡️ Data Portability & Privacy', desc: 'Export statements, purge data, backups', tags: 'data privacy purge delete export csv backup sync' },
   ];
 
   // Filter tabs on-the-fly based on search input
@@ -448,7 +507,17 @@ const Settings = () => {
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                        <div className="pt-2">
+                          <label className="block text-xs text-slate-500 mb-1 font-semibold uppercase">Old Password</label>
+                          <input
+                            type="password"
+                            placeholder="Current password"
+                            className="w-full glass-input text-xs py-2.5 mb-4"
+                            value={oldPassword}
+                            onChange={e => setOldPassword(e.target.value)}
+                          />
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div>
                             <label className="block text-xs text-slate-500 mb-1 font-semibold uppercase">New Password</label>
                             <input
@@ -469,70 +538,6 @@ const Settings = () => {
                               onChange={e => setConfirmPassword(e.target.value)}
                             />
                           </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* SECURITY TAB */}
-                    {activeTab === 'security' && (
-                      <div className="space-y-4">
-                        <div className="border-b border-slate-800/50 pb-3 flex justify-between items-center">
-                          <div>
-                            <h3 className="text-lg font-bold text-white">🔒 Security Controls</h3>
-                            <p className="text-xs text-slate-400 mt-0.5">Define authenticators and strict privacy locks</p>
-                          </div>
-                          <div className="flex items-center gap-1 bg-indigo-950/30 text-indigo-400 text-[9px] px-2 py-0.5 rounded border border-indigo-500/20 font-bold">
-                            <span>🔒 Encrypted</span>
-                          </div>
-                        </div>
-
-                        <div className="space-y-3">
-                          
-                          {/* 3. Dynamic Toggle Switches */}
-                          <div className="bg-slate-900/60 p-4 rounded-2xl border border-slate-850 flex items-center justify-between hover:border-slate-800 transition-all">
-                            <div>
-                              <div className="text-xs font-bold text-white">Enable Two-Factor Authentication (2FA)</div>
-                              <div className="text-[10px] text-slate-400 mt-0.5">Require an authenticator pin when accessing the dashboard on new devices.</div>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => updateSettingField('security', 'twoFactorEnabled', !settings.security?.twoFactorEnabled)}
-                              className={`w-10 h-6 flex items-center rounded-full p-1 cursor-pointer transition-all duration-300 ${
-                                settings.security?.twoFactorEnabled ? 'bg-indigo-600' : 'bg-slate-800'
-                              }`}
-                            >
-                              <div className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-all duration-300 ${
-                                settings.security?.twoFactorEnabled ? 'translate-x-4' : 'translate-x-0'
-                              }`}></div>
-                            </button>
-                          </div>
-
-                          <div className="bg-slate-900/60 p-4 rounded-2xl border border-slate-850 flex items-center justify-between hover:border-slate-800 transition-all">
-                            <div>
-                              <div className="text-xs font-bold text-white">Strict Chart Privacy Masking</div>
-                              <div className="text-[10px] text-slate-400 mt-0.5">Conceal exact monetary figures on analytical charts.</div>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => updateSettingField('security', 'privacyControls', !settings.security?.privacyControls)}
-                              className={`w-10 h-6 flex items-center rounded-full p-1 cursor-pointer transition-all duration-300 ${
-                                settings.security?.privacyControls ? 'bg-indigo-600' : 'bg-slate-800'
-                              }`}
-                            >
-                              <div className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-all duration-300 ${
-                                settings.security?.privacyControls ? 'translate-x-4' : 'translate-x-0'
-                              }`}></div>
-                            </button>
-                          </div>
-
-                          <div className="bg-slate-900/20 p-4 border border-slate-850 rounded-xl flex items-center justify-between text-xs mt-4">
-                            <div>
-                              <div className="font-bold text-white">Session Audit Information</div>
-                              <div className="text-[10px] text-slate-500 mt-0.5">Logged in from: Chrome (macOS IP: 192.168.1.1)</div>
-                            </div>
-                            <span className="bg-emerald-950 text-emerald-400 text-[9px] font-bold px-2 py-0.5 rounded tracking-wide border border-emerald-500/20">Secure Active</span>
-                          </div>
-
                         </div>
                       </div>
                     )}
@@ -781,183 +786,71 @@ const Settings = () => {
                       </div>
                     )}
 
-                    {/* CONNECTED ACCOUNTS TAB */}
-                    {activeTab === 'accounts' && (
-                      <div className="space-y-4">
-                        <div className="border-b border-slate-800/50 pb-3">
-                          <h3 className="text-lg font-bold text-white">💳 Integrated Portals</h3>
-                          <p className="text-xs text-slate-400 mt-0.5">Link bank accounts, Razorpay checkouts, and active UPI auto-pays</p>
-                        </div>
 
-                        <div className="space-y-4">
-                          
-                          {/* Toggles */}
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div className="bg-slate-900/60 p-4 rounded-2xl border border-slate-850 flex items-center justify-between hover:border-slate-800 transition-all">
-                              <div>
-                                <div className="text-xs font-bold text-white">Integrate Bank Accounts</div>
-                                <div className="text-[10px] text-slate-400 mt-0.5">Sync ledger transactions automatically via Plaid API.</div>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => updateSettingField('connectedAccounts', 'bankIntegrations', !settings.connectedAccounts?.bankIntegrations)}
-                                className={`w-10 h-6 flex items-center rounded-full p-1 cursor-pointer transition-all duration-300 ${
-                                  settings.connectedAccounts?.bankIntegrations ? 'bg-indigo-600' : 'bg-slate-800'
-                                }`}
-                              >
-                                <div className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-all duration-300 ${
-                                  settings.connectedAccounts?.bankIntegrations ? 'translate-x-4' : 'translate-x-0'
-                                }`}></div>
-                              </button>
-                            </div>
-
-                            <div className="bg-slate-900/60 p-4 rounded-2xl border border-slate-850 flex items-center justify-between hover:border-slate-800 transition-all">
-                              <div>
-                                <div className="text-xs font-bold text-white">Razorpay Webhooks</div>
-                                <div className="text-[10px] text-slate-400 mt-0.5">Auto-capture billing payments and sync ledger invoices.</div>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => updateSettingField('connectedAccounts', 'upiLinking', !settings.connectedAccounts?.upiLinking)}
-                                className={`w-10 h-6 flex items-center rounded-full p-1 cursor-pointer transition-all duration-300 ${
-                                  settings.connectedAccounts?.upiLinking ? 'bg-indigo-600' : 'bg-slate-800'
-                                }`}
-                              >
-                                <div className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-all duration-300 ${
-                                  settings.connectedAccounts?.upiLinking ? 'translate-x-4' : 'translate-x-0'
-                                }`}></div>
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* 12. Connected Bank Statuses list */}
-                          <div className="space-y-3.5 pt-2">
-                            <label className="block text-[10px] text-slate-500 font-semibold uppercase tracking-wider">Institution Connectivity Status</label>
-                            
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                              
-                              <div className="p-3 bg-slate-950/40 border border-slate-900 rounded-xl flex items-center justify-between">
-                                <div>
-                                  <div className="text-xs font-bold text-white">🏦 HDFC Bank</div>
-                                  <span className="text-[9px] text-slate-500">Auto Sync Active</span>
-                                </div>
-                                <span className="bg-emerald-950 text-emerald-400 text-[9px] font-bold px-2 py-0.5 rounded tracking-wide border border-emerald-500/20">✔ Live</span>
-                              </div>
-
-                              <div className="p-3 bg-slate-950/40 border border-slate-900 rounded-xl flex items-center justify-between">
-                                <div>
-                                  <div className="text-xs font-bold text-white">💳 Razorpay</div>
-                                  <span className="text-[9px] text-slate-500">Invoice Gateway</span>
-                                </div>
-                                <span className="bg-indigo-950 text-indigo-400 text-[9px] font-bold px-2 py-0.5 rounded tracking-wide border border-indigo-500/20">✔ Active</span>
-                              </div>
-
-                              <div className="p-3 bg-slate-950/40 border border-slate-900 rounded-xl flex items-center justify-between">
-                                <div>
-                                  <div className="text-xs font-bold text-white">🔑 PayPal Global</div>
-                                  <span className="text-[9px] text-slate-500">Credentials expired</span>
-                                </div>
-                                <span className="bg-amber-950 text-amber-400 text-[9px] font-bold px-2 py-0.5 rounded tracking-wide border border-amber-500/20">⚠️ Expired</span>
-                              </div>
-
-                            </div>
-                          </div>
-
-                        </div>
-                      </div>
-                    )}
-
-                    {/* DATA & CLOUD BACKUPS TAB */}
-                    {activeTab === 'data' && (
+                    {/* DATA PORTABILITY & PRIVACY TAB */}
+                    {activeTab === 'privacy' && (
                       <div className="space-y-6">
                         
                         <div className="border-b border-slate-800/50 pb-3 flex justify-between items-center">
                           <div>
                             <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                              💾 Backups & Data Statement Exporters
+                              🛡️ Data Portability & Privacy
                             </h3>
-                            <p className="text-xs text-slate-400 mt-0.5">Safeguard historical transaction logs and settings profiles</p>
-                          </div>
-                          
-                          {/* 5. Trust Indicators */}
-                          <div className="flex flex-col text-right text-[10px] text-slate-400 font-medium">
-                            <div className="text-white font-bold flex items-center gap-1.5 justify-end">
-                              <span className="w-2 h-2 rounded-full bg-emerald-500"></span> Secure Sync Enabled
-                            </div>
-                            <div className="text-slate-500 text-[9px] mt-0.5">Last Sync: {lastBackupTime}</div>
+                            <p className="text-xs text-slate-400 mt-0.5">Control your data, export statements, or purge your history.</p>
                           </div>
                         </div>
 
                         {/* Export format cards with soft glow hover scales */}
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                          {[
-                            { format: 'csv', icon: '📊', name: 'Ledger CSV', desc: 'Spreadsheet format' },
-                            { format: 'pdf', icon: '📋', name: 'Invoice PDF', desc: 'Standard printed layout' },
-                            { format: 'json', icon: '💻', name: 'Backup JSON', desc: 'Complete config file' },
-                            { format: 'excel', icon: '📈', name: 'Excel Sheet', desc: 'Microsoft Excel binary' },
-                          ].map(exp => (
-                            <button
-                              key={exp.format}
-                              type="button"
-                              onClick={() => handleBackupExport(exp.format)}
-                              className="p-4 bg-slate-900/40 hover:bg-slate-900 border border-slate-800/60 hover:border-indigo-500/50 rounded-2xl text-center flex flex-col justify-between cursor-pointer transition-all hover:-translate-y-1 hover:shadow-xl hover:shadow-indigo-500/5 duration-300"
-                            >
-                              <div>
-                                <span className="text-2xl">{exp.icon}</span>
-                                <div className="text-xs font-extrabold text-white mt-2">{exp.name}</div>
-                                <div className="text-[9px] text-slate-500 mt-1 leading-normal">{exp.desc}</div>
-                              </div>
-                              <span className="w-full mt-4 py-1.5 bg-indigo-950/20 hover:bg-indigo-900/40 border border-indigo-700/20 text-indigo-400 text-[10px] font-bold rounded-lg transition-colors inline-block">
-                                Download File
-                              </span>
-                            </button>
-                          ))}
+                        <div className="space-y-4">
+                          <h4 className="text-xs font-extrabold text-white uppercase tracking-wider">Export Financial Statement</h4>
+                          <p className="text-xs text-slate-400 mt-0.5">Download your entire expense history as a clean CSV or Excel file.</p>
+                          <div className="grid grid-cols-2 md:grid-cols-2 gap-4">
+                            {[
+                              { format: 'csv', icon: '📊', name: 'Ledger CSV', desc: 'Spreadsheet format' },
+                              { format: 'excel', icon: '📈', name: 'Excel Sheet', desc: 'Microsoft Excel format' },
+                            ].map(exp => (
+                              <button
+                                key={exp.format}
+                                type="button"
+                                onClick={() => handleBackupExport(exp.format)}
+                                className="p-4 bg-slate-900/40 hover:bg-slate-900 border border-slate-800/60 hover:border-indigo-500/50 rounded-2xl text-center flex flex-col justify-between cursor-pointer transition-all hover:-translate-y-1 hover:shadow-xl hover:shadow-indigo-500/5 duration-300"
+                              >
+                                <div>
+                                  <span className="text-2xl">{exp.icon}</span>
+                                  <div className="text-xs font-extrabold text-white mt-2">{exp.name}</div>
+                                  <div className="text-[9px] text-slate-500 mt-1 leading-normal">{exp.desc}</div>
+                                </div>
+                                <span className="w-full mt-4 py-1.5 bg-indigo-950/20 hover:bg-indigo-900/40 border border-indigo-700/20 text-indigo-400 text-[10px] font-bold rounded-lg transition-colors inline-block">
+                                  Download File
+                                </span>
+                              </button>
+                            ))}
+                          </div>
                         </div>
 
-                        {/* 6. REDUCE EMPTY SPACE in Main settings panel */}
                         <div className="border-t border-slate-800/50 pt-5 mt-4 space-y-4">
-                          <h4 className="text-xs font-extrabold text-white uppercase tracking-wider">Suggested Storage Additions</h4>
+                          <h4 className="text-xs font-extrabold text-white uppercase tracking-wider">Backup & Sync</h4>
                           
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             
-                            {/* Auto backup console widget card */}
-                            <div className="p-4 bg-slate-950/40 border border-slate-900 rounded-2xl flex flex-col justify-between space-y-4">
-                              <div className="flex justify-between items-start">
-                                <div>
-                                  <div className="text-xs font-bold text-white">⚙️ Auto Backup Automation</div>
-                                  <div className="text-[10px] text-slate-400 mt-0.5">Encrypt and push your ledger database updates daily.</div>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => setAutoBackup(!autoBackup)}
-                                  className={`w-9 h-5.5 flex items-center rounded-full p-1 cursor-pointer transition-all duration-300 ${
-                                    autoBackup ? 'bg-emerald-600' : 'bg-slate-800'
-                                  }`}
-                                >
-                                  <div className={`bg-white w-3.5 h-3.5 rounded-full shadow transform transition-all duration-300 ${
-                                    autoBackup ? 'translate-x-3.5' : 'translate-x-0'
-                                  }`}></div>
-                                </button>
-                              </div>
-                              
-                              <div className="text-[10px] text-slate-500 bg-slate-900/40 p-2.5 rounded-lg border border-slate-850 flex justify-between items-center">
-                                <span>Automation Status:</span>
-                                <span className={`font-bold uppercase tracking-wider ${autoBackup ? 'text-emerald-400' : 'text-slate-500'}`}>
-                                  {autoBackup ? '● Enabled Hourly' : 'Offline'}
-                                </span>
-                              </div>
-                            </div>
-
                             {/* Cloud Sync Provider connection panel */}
-                            <div className="p-4 bg-slate-950/40 border border-slate-900 rounded-2xl space-y-3.5">
-                              <div className="text-xs font-bold text-white">☁️ Third-Party Cloud Backup Systems</div>
+                            <div className="p-4 bg-slate-950/40 border border-slate-900 rounded-2xl space-y-3.5 w-full">
+                              <div className="text-xs font-bold text-white flex justify-between">
+                                <span>☁️ Third-Party Cloud Sync</span>
+                                <div className="flex flex-col text-right text-[10px] text-slate-400 font-medium">
+                                  <div className="text-white font-bold flex items-center gap-1.5 justify-end">
+                                    <span className="w-2 h-2 rounded-full bg-emerald-500"></span> Secure Sync Enabled
+                                  </div>
+                                  <div className="text-slate-500 text-[9px] mt-0.5">Last Sync: {lastBackupTime}</div>
+                                </div>
+                              </div>
                               
                               <div className="space-y-2 text-[10px]">
                                 <div className="flex justify-between items-center p-2 bg-slate-900/30 rounded-lg">
                                   <span className="text-slate-300 font-semibold flex items-center gap-1.5">🗂️ Google Drive Sync</span>
                                   <button
                                     type="button"
-                                    onClick={() => setGoogleDriveSync(!googleDriveSync)}
+                                    onClick={() => { setGoogleDriveSync(!googleDriveSync); setLastBackupTime('Just now'); showToast('Google Drive synced!') }}
                                     className={`w-8 h-5 flex items-center rounded-full p-0.5 cursor-pointer transition-all ${
                                       googleDriveSync ? 'bg-indigo-600' : 'bg-slate-800'
                                     }`}
@@ -967,35 +860,36 @@ const Settings = () => {
                                     }`}></div>
                                   </button>
                                 </div>
-
-                                <div className="flex justify-between items-center p-2 bg-slate-900/30 rounded-lg">
-                                  <span className="text-slate-300 font-semibold flex items-center gap-1.5">📦 Dropbox Backup</span>
-                                  <button
-                                    type="button"
-                                    onClick={() => setDropboxSync(!dropboxSync)}
-                                    className={`w-8 h-5 flex items-center rounded-full p-0.5 cursor-pointer transition-all ${
-                                      dropboxSync ? 'bg-indigo-600' : 'bg-slate-800'
-                                    }`}
-                                  >
-                                    <div className={`bg-white w-4 h-4 rounded-full shadow transform transition-all duration-300 ${
-                                      dropboxSync ? 'translate-x-3' : 'translate-x-0'
-                                    }`}></div>
-                                  </button>
-                                </div>
                               </div>
                             </div>
 
                           </div>
                         </div>
 
+                        <div className="border-t border-rose-900/50 pt-5 mt-4 space-y-4">
+                          <h4 className="text-xs font-extrabold text-rose-500 uppercase tracking-wider">Danger Zone</h4>
+                          <div className="p-4 bg-rose-950/20 border border-rose-900/50 rounded-2xl flex flex-col space-y-2">
+                            <h5 className="text-sm font-bold text-rose-400">Data Purge / Reset</h5>
+                            <p className="text-xs text-rose-300/70 pb-3 border-b border-rose-900/30">Clear all transactions and budgets to start fresh. This will not delete your account.</p>
+                            <button
+                              type="button"
+                              onClick={handleDataPurge}
+                              className="w-full mt-2 py-2.5 bg-rose-900/40 hover:bg-rose-600 text-white text-xs font-bold rounded-lg transition-all border border-rose-700/50"
+                            >
+                              ⚠️ Clear All Transactions
+                            </button>
+                          </div>
+                        </div>
+
                       </div>
                     )}
+
 
                   </div>
                 )}
 
                 {/* Save settings action button */}
-                {activeTab !== 'data' && !isSwitchingTab && (
+                {activeTab !== 'privacy' && !isSwitchingTab && (
                   <div className="pt-6 border-t border-slate-800/40 flex justify-end">
                     <button
                       type="submit"

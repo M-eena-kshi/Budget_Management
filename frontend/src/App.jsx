@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
@@ -12,6 +12,8 @@ import AIAssistant from './pages/AIAssistant';
 import Settings from './pages/Settings';
 import HelpCenter from './pages/HelpCenter';
 import Subscriptions from './pages/Subscriptions';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
 
 // A simple wrapper for protected routes
 const ProtectedRoute = ({ children }) => {
@@ -20,11 +22,51 @@ const ProtectedRoute = ({ children }) => {
 };
 
 function App() {
+  useEffect(() => {
+    const applyTheme = (theme, accent) => {
+      document.body.className = `theme-${theme} accent-${accent} antialiased`;
+    };
+
+    const loadAndApplyTheme = () => {
+      try {
+        const user = JSON.parse(localStorage.getItem('user'));
+        const theme = user?.settings?.theme || 'dark';
+        const accent = user?.settings?.accentColor || 'indigo';
+        applyTheme(theme, accent);
+      } catch (e) {}
+    };
+
+    loadAndApplyTheme();
+    
+    window.addEventListener('storage', loadAndApplyTheme);
+    window.addEventListener('theme-changed', loadAndApplyTheme);
+    
+    const handlePreview = (e) => {
+      try {
+        const user = JSON.parse(localStorage.getItem('user'));
+        let theme = user?.settings?.theme || 'dark';
+        let accent = user?.settings?.accentColor || 'indigo';
+        if (e.detail.field === 'theme') theme = e.detail.value;
+        if (e.detail.field === 'accentColor') accent = e.detail.value;
+        applyTheme(theme, accent);
+      } catch (err) {}
+    };
+    window.addEventListener('theme-preview', handlePreview);
+
+    return () => {
+      window.removeEventListener('storage', loadAndApplyTheme);
+      window.removeEventListener('theme-changed', loadAndApplyTheme);
+      window.removeEventListener('theme-preview', handlePreview);
+    };
+  }, []);
+
   return (
     <Router>
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password/:token" element={<ResetPassword />} />
         <Route
           path="/dashboard"
           element={
